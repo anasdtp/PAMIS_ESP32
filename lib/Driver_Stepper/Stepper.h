@@ -1,6 +1,6 @@
 #include <Arduino.h>
 
-#define DEGREPARSTEP 1.8 //a confirmer
+#define DEGREPARSTEP 3.6 //a confirmer
 #define MOUVEMENT_ROTATION 2
 #define MOUVEMENT_LIGNE_DROITE 3
 
