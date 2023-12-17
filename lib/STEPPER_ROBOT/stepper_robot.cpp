@@ -1,5 +1,5 @@
 #include "stepper_robot.h"
-
+#include <Capteur.h>
 
 volatile double x_robot = 0, y_robot = 0, theta_robot = 0;//degree en dizieme de degree, distance en mm
         /*(STEPpin, DIRpin, MOpin)*/
@@ -11,24 +11,36 @@ void initDriver(){
   delay (100);
 }
 
-void bothStepper(int swpulse, int dir, int mvt){
+int val_vitesse_rot(double vit){//En tr/min
+  int delaiPas = 0;
+
+  if(vit){delaiPas = (60000.0 / (abs(vit) * (360.0 / DEGREPARSTEP)));}
+  return delaiPas;//en ms
+}
+
+int val_vitesse_trans(double vit){//En m/s
+  //N = vit * 60/(2PI*Rayon_roue) //en tr/min
+  return (val_vitesse_rot(vit * 60./(2.*PI*(Rayon_roue/1000.))));//periode pas en ms
+}
+
+void bothStepper(int swpulse, int dir, int mvt, int delaiPas){
   if (stepper1.m0==0) {stepper1.MO(LOW); stepper2.MO(LOW);} else {stepper2.MO(HIGH); stepper2.MO(HIGH);}
 
   if(mvt == MOUVEMENT_LIGNE_DROITE){
-    if (dir==0) {stepper1.DIR(HIGH); stepper2.DIR(LOW );} 
-    else        {stepper1.DIR(LOW ); stepper2.DIR(HIGH);}
+    if (dir==0) {stepper1.DIR(LOW ); stepper2.DIR(HIGH);}
+    else        {stepper1.DIR(HIGH); stepper2.DIR(LOW );} 
   }
   else if(mvt == MOUVEMENT_ROTATION){
-    if (dir==0) {stepper1.DIR(LOW ); stepper2.DIR(LOW );} 
-    else        {stepper1.DIR(HIGH); stepper2.DIR(HIGH);}
+    if (dir==0) {stepper1.DIR(HIGH); stepper2.DIR(HIGH);} 
+    else        {stepper1.DIR(LOW ); stepper2.DIR(LOW );}
   }
-    
+
   // STEP GENERATOR
   for ( int i = 0; i < swpulse; i++) {
       stepper1.STEP(HIGH); stepper2.STEP(HIGH);
-      delay(1);
+      delayMicroseconds(delaiPas*1000.*2);
       stepper1.STEP(LOW); stepper2.STEP(LOW); 
-      delay(1);
+      delayMicroseconds(delaiPas*1000.*2);
   }
   return;
 }
@@ -47,10 +59,10 @@ void rotation_robot_absolue(double degree){//en dizieme de degree 360° -> 3600 
   }
   
   if(degree<0){dir = 1;}
-  double distance_totale = abs(degree) * PI/ 1800 * Rayon_Robot;
+  double distance_totale = abs(degree) * PI/ 1800 * Rayon_robot;
   double Step = (distance_totale*180.0/(Rayon_roue*PI))/degreeParStep;
 
-  bothStepper((int)Step, dir, MOUVEMENT_ROTATION);
+  bothStepper((int)Step, dir, MOUVEMENT_ROTATION,1);
 
   theta_robot += degree;
   if (theta_robot > 1800.0) {
@@ -70,7 +82,10 @@ void rotation_robot_relative(double degree) {//en dizieme de degree
     theta_robot = degree;
 }
 
-void Ligne_droite(double distance) {//En mm
+
+
+void Ligne_droite(double distance, double vit_m_s) {//En mm
+    // static double accel = 0.2, ta = 0, tc = 0, td = 0;//m/s² //tc temps à vitesse constante, ta en acceleration, td en deceleration en ms
     // Calculate the number of steps required to move the given distance
     // Assuming DEGREEPARSTEP is the number of degrees moved per step
     double degreeParStep = DEGREPARSTEP;
@@ -79,11 +94,12 @@ void Ligne_droite(double distance) {//En mm
     
     // Determine the direction (forward or backward movement)
     int dir = (distance >= 0) ? 0 : 1;
-
+    
+    // ta = vit_m_s/accel; td = vit_m_s/accel;
     // Call the function to move both stepper motors
-    bothStepper((int)abs(steps), dir, MOUVEMENT_LIGNE_DROITE);
-    x_robot = x_robot + distance * cos(theta_robot * PI / 1800.0);
-    y_robot = y_robot + distance * sin(theta_robot * PI / 1800.0);
+    bothStepper((int)abs(steps), dir, MOUVEMENT_LIGNE_DROITE,1);
+    // x_robot = x_robot + distance * cos(theta_robot * PI / 1800.0);
+    // y_robot = y_robot + distance * sin(theta_robot * PI / 1800.0);
 }
 
 void XYT(double px, double py, double ptheta){
@@ -120,7 +136,7 @@ void XYT(double px, double py, double ptheta){
   Serial.printf("rotation_robot_absolue(ang1 : %lf);       ", ang1); 
   delay(200);
   // LIGNE_DROITE_X_Y_THETA :
-  Ligne_droite(dist);
+  Ligne_droite(dist, 0.15);
   Serial.printf("Ligne_droite(dist : %lf);       ", dist); 
   delay(200);
   // ROTATION_X_Y_THETA_2 : 
@@ -131,16 +147,19 @@ void XYT(double px, double py, double ptheta){
 
 void recalage(int16_t distance, short mode, int16_t valRecalage)
 {
+  static double x_init,y_init,theta_init;
   // si mode == 1, recalage sur x, sinon recalage sur y
   int16_t distance_parcourue = 0;
-  double step = (distance < 0 ? -10.0 : 10.0); 
+  int16_t step = (distance < 0 ? -2 : 2); 
   //Je le mets au cas où mais distance doit toujours etre positif parce que les interrupteurs sont devant. Apres on pourrait changer d'avis donc voila
+
   while (distance_parcourue < abs(distance))
   {
-    Ligne_droite(step); // 1 cm
-    distance_parcourue += 10;
-    if (1)//Capteur interrupteur, Si 1 alors on a bien touché le rebord, recalage fait
+    Ligne_droite(step,0.15); // 1 cm
+    distance_parcourue += abs(step);
+    if (etatMoustaches()==1)//Capteur interrupteur, alors on a bien touché le rebord, recalage fait
     {
+      // Serial.printf("etatMoustaches()==2\n");
       distance_parcourue = abs(distance);//On sort de la boucle
       if(mode == 1){//sur x
         x_robot = valRecalage;
@@ -170,7 +189,7 @@ void recalage(int16_t distance, short mode, int16_t valRecalage)
         }
       }
     }else{
-      delay(5);
+      delay(10);
     }
   }
 }
